@@ -17,6 +17,10 @@
 import datetime
 import json
 from typing import Tuple, Optional
+import io
+import base64
+import pandas as pd
+from hashlib import md5
 
 from pyspark.sql.types import DateType, Row, StructType
 from pyspark.sql.utils import has_numpy
@@ -24,6 +28,42 @@ from pyspark.errors import PySparkTypeError, PySparkValueError
 
 __all__ = ["GroupState", "GroupStateTimeout"]
 
+def pandas_to_string(to_state_df) -> Tuple:
+    # Create an empty file object
+    to_state_bio = io.BytesIO()
+
+    # Pushes the pickle of the pandas dataframe to the BytesIO object
+    to_state_df.to_parquet(to_state_bio)
+
+    # create a base64 bytes object from the BytesIO
+    to_state_b64 = base64.b64encode(to_state_bio.getvalue())
+
+    # ASCII encode the base64 object to a string that we can save in state
+    to_state_string = to_state_b64.decode("ascii")
+
+    # Get the MD5 checksum of the file
+    md5hexdigest = md5(to_state_bio.getbuffer()).hexdigest()
+
+    return (to_state_string, md5hexdigest)
+
+
+def string_to_pandas(from_state_string, from_state_md5hexdigest) -> pd.DataFrame:
+    # Encode string to b64 bytes
+    from_state_b64 = from_state_string.encode("ascii")
+
+    # decode b64 bytes into python bytes
+    from_state_bytes = base64.b64decode(from_state_b64)
+
+    # Create a BytesIO object from the python bytes
+    from_state_bio = io.BytesIO(from_state_bytes)
+
+    # Get the MD5 checksum of the file
+    md5sum = md5(from_state_bio.getbuffer()).hexdigest()
+
+    if md5sum != from_state_md5hexdigest:
+        raise Exception("MD5 did not match")
+    
+    return pd.read_parquet(from_state_bio)
 
 class GroupStateTimeout:
     """
